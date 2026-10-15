@@ -2,50 +2,40 @@
 ml_api_interview/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                      # Точка входа FastAPI
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── v1/
-│   │       ├── __init__.py
-│   │       ── predict.py           # Эндпоинты
+│   ├── main.py                    # Точка входа FastAPI
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── config.py                # ✅ Настройки (Pydantic Settings)
-│   │   ├── security.py              # Безопасность
-│   │   └── exceptions.py            # Кастомные исключения
+│   │   ├── config.py              # Настройки (Pydantic Settings)
+│   │   ├── db.py                  # ← db.py (подключение к PostgreSQL)
+│   │   └── cache.py               # ← cache.py (Redis утилиты)
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── base.py                  # ✅ Абстрактный класс
-│   │   ├── model_type_a.py          # ✅ Pickle реализация
-│   │   └── model_type_b.py          # ✅ JSON реализация
+│   │   ├── base.py                # Абстрактный базовый класс
+│   │   ├── model_type_a.py        # Pickle реализация
+│   │   ├── model_type_b.py        # JSON реализация
+│   │   └── legacy_model.py        # ← model.py (старая обёртка, для совместимости)
 │   ├── schemas/
 │   │   ├── __init__.py
-│   │   └── predictions.py           # Pydantic схемы
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── prediction_service.py    # Бизнес-логика
+│   │   └── predictions.py         # Pydantic схемы
 │   └── utils/
 │       ├── __init__.py
-│       ├── create_dummy_model.py    # ✅ Генерация тестовой модели
-│       ├── cache.py                 # Redis cache
-│       └── logging_config.py        # Логирование
+│       └── create_dummy_models.py # Генерация тестовых моделей
 ── data/
-│   ├── models/
-│   │   └── .gitkeep                 # Placeholder
-│   └── input_ml/
-│       ├── notebook_ml_1.ipynb
-│       ├── notebook_ml_2.ipynb
-│       └── notebook_ml_3.ipynb
+│   ├── input_ml/                  # ← notebook_ml_1.ipynb, notebook_ml_2.ipynb
+│   │   ├── notebook_ml_1.ipynb
+│   │   └── notebook_ml_2.ipynb
+│   └── models/                    # model.pkl, model.json (генерируются скриптом)
 ├── tests/
 │   ├── __init__.py
-│   ├── conftest.py                  # ✅ Pytest fixtures
+│   ├── conftest.py
 │   ├── test_health.py
-│   ── test_predict.py
-├── docker-compose.yml               # ✅
-├── Dockerfile                       # ✅
-├── .gitignore                       # ✅ 
-├── .env.example                     # ✅ Шаблон
-├── pyproject.toml                   # Poetry dependencies
-├── poetry.lock
-└── README.md                        # ✅ Документация
+│   └── test_predict.py
+├── .dockerignore
+├── .env
+├── .env.example
+├── docker-compose.yml
+├── Dockerfile
+├── main.py                        # Корневой main.py для uvicorn
+├── requirements.txt
+└── README.md
 ```

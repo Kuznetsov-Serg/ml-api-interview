@@ -7,10 +7,10 @@ class Settings(BaseSettings):
     ENV: str = "development"
 
     # Model
-    MODEL_TYPE: str = "type_a"  # "type_a" или "type_b"
+    MODEL_TYPE: str = "type_pickle"  # "type_pickle" или "type_json"
     # Базовые пути. Будут перезаписаны в main.py в зависимости от MODEL_TYPE
-    MODEL_PATH_A: str = "./data/models/model_a.pkl"
-    MODEL_PATH_B: str = "./data/models/model_b.json"
+    MODEL_PATH_PICKLE: str = "./data/models/model_pickle.pkl"
+    MODEL_PATH_JSON: str = "./data/models/model_json.json"
 
     # PostgreSQL
     DATABASE_URL: str = "postgresql+asyncpg://ml_user:ml_pass@db:5432/ml_db"

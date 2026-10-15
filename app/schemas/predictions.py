@@ -1,4 +1,4 @@
-# app/schemas/schemas.py
+# app/schemas/predictions.py
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime

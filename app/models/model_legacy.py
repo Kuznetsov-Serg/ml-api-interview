@@ -1,4 +1,5 @@
-# ???
+# app/models/model_legacy.py
+"""Legacy ML model wrapper (для обратной совместимости)."""
 from pathlib import Path
 from typing import Any
 import joblib
@@ -18,16 +19,13 @@ class MLModel:
         self._feature_names = None
 
     def load(self) -> None:
-        """Ленивая загрузка модели (вызывается один раз при старте)."""
+        """Ленивая загрузка модели."""
         if self._model is not None:
             return
-
         logger.info("loading_model", path=str(self._model_path))
         self._model = joblib.load(self._model_path)
-
         if hasattr(self._model, 'feature_names_in_'):
             self._feature_names = list(self._model.feature_names_in_)
-
         logger.info("model_loaded",
                     type=type(self._model).__name__,
                     features=self._feature_names)
@@ -37,13 +35,10 @@ class MLModel:
         if self._model is None:
             self.load()
 
-        # Нормализация входа
         if isinstance(features, dict):
             features = [features]
 
         df = pd.DataFrame(features)
-
-        # Векторизованное предсказание
         predictions = self._model.predict(df)
         probabilities = self._model.predict_proba(df)
 
@@ -66,6 +61,7 @@ class MLModel:
 # Singleton
 _model_instance: MLModel | None = None
 
+@lru_cache()
 def get_model(model_path: str) -> MLModel:
     global _model_instance
     if _model_instance is None:

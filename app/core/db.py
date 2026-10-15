@@ -1,7 +1,9 @@
+# app/core/db.py
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import Column, Integer, Float, String, DateTime, JSON, text
+from sqlalchemy import Column, Integer, Float, String, DateTime, JSON
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
+from app.config.config import get_settings
 
 Base = declarative_base()
 
@@ -15,10 +17,15 @@ class PredictionRecord(Base):
     probability = Column(Float)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-async def get_db_session(database_url: str = None):
-    from app.config import get_settings
-    url = database_url or get_settings().DATABASE_URL
-    engine = create_async_engine(url, pool_size=10, max_overflow=20, pool_pre_ping=True)
+async def get_db_session() -> tuple:
+    """Создаёт engine и session factory."""
+    settings = get_settings()
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True
+    )
     session_factory = async_sessionmaker(engine, class_=AsyncSession)
 
     async with engine.begin() as conn:
@@ -26,7 +33,14 @@ async def get_db_session(database_url: str = None):
 
     return engine, session_factory
 
-async def save_prediction(db_engine, session_factory, request_id, input_data, prediction):
+async def save_prediction(
+        db_engine,
+        session_factory,
+        request_id: str,
+        input_data: dict,
+        prediction: dict
+):
+    """Сохраняет результат предсказания в БД."""
     async with session_factory() as session:
         record = PredictionRecord(
             request_id=request_id,

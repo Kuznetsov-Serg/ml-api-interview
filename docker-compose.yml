@@ -9,7 +9,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://ml_user:ml_pass@db:5432/ml_db
       - REDIS_URL=redis://redis:6379/0
-      - MODEL_PATH=.data/models/model.pkl
+      - MODEL_PATH=.data/models/model_pickle.pkl
       - ENV=production
     depends_on:
       db:
@@ -19,6 +19,11 @@ services:
     restart: unless-stopped
     networks:
       - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   db:
     image: postgres:16-alpine
@@ -37,6 +42,11 @@ services:
       retries: 5
     networks:
       - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
@@ -49,6 +59,11 @@ services:
       retries: 5
     networks:
       - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:

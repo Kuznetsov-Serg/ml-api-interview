@@ -16,23 +16,23 @@ def create_dummy_models():
     model_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Model A — pickle (класс на уровне модуля!)
-    model_a = DummyPickleModel()
-    model_a_path = model_dir / "model_a.pkl"
-    with open(model_a_path, "wb") as f:
-        pickle.dump(model_a, f)
-    print(f"✅ Model A (pickle) created: {model_a_path}")
+    model_pickle = DummyPickleModel()
+    model_pickle_path = model_dir / "model_pickle.pkl"
+    with open(model_pickle_path, "wb") as f:
+        pickle.dump(model_pickle, f)
+    print(f"✅ Model pickle created: {model_pickle_path}")
 
-    # 2. Model B — JSON (только данные)
-    model_b_data = {
+    # 2. Model JSON (только данные)
+    model_json_data = {
         "name": "DummyJSONModel",
         "version": "1.0",
         "features": ["age", "income", "has_loan", "transaction_count"],
         "type": "mock",
     }
-    model_b_path = model_dir / "model_b.json"
-    with open(model_b_path, "w", encoding="utf-8") as f:
-        json.dump(model_b_data, f, indent=2, ensure_ascii=False)
-    print(f"✅ Model B (JSON) created: {model_b_path}")
+    model_json_path = model_dir / "model_json.json"
+    with open(model_json_path, "w", encoding="utf-8") as f:
+        json.dump(model_json_data, f, indent=2, ensure_ascii=False)
+    print(f"✅ Model JSON created: {model_json_path}")
 
 
 if __name__ == "__main__":

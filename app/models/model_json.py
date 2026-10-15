@@ -1,12 +1,12 @@
-# app/models/model_type_b.py
+# app/models/model_json.py
 """
-Model Type B — загрузка через JSON (безопасный текстовый формат).
+Model Type JSON — загрузка через JSON (безопасный текстовый формат).
 """
 import json
 from .base import BaseModelInterface
 
 
-class SideModelB(BaseModelInterface):
+class SideModelJSON(BaseModelInterface):
     def __init__(self):
         self.model_data = None
 
@@ -27,7 +27,7 @@ class SideModelB(BaseModelInterface):
         prediction = 1 if probability > 0.5 else 0
 
         return {
-            "model_type": "B",
+            "model_type": "JSON",
             "model_name": self.model_data.get("name", "Unknown"),
             "model_version": self.model_data.get("version", "1.0"),
             "prediction": prediction,

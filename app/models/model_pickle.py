@@ -1,6 +1,6 @@
-# app/models/model_type_a.py
+# app/models/model_pickle.py
 """
-Model Type A — загрузка через pickle.
+Model Type PICKLE — загрузка через pickle.
 """
 import pickle
 from pathlib import Path
@@ -8,7 +8,7 @@ from .base import BaseModelInterface
 from .dummy_models import DummyPickleModel  # Импортируем класс!
 
 
-class SideModelA(BaseModelInterface):
+class SideModelPickle(BaseModelInterface):
     def __init__(self):
         self.model = None
 
@@ -28,7 +28,7 @@ class SideModelA(BaseModelInterface):
 
         result = self.model.predict(data)
         return {
-            "model_type": "A",
+            "model_type": "PICKLE",
             "model_name": self.model.name,
             "model_version": self.model.version,
             **result,
