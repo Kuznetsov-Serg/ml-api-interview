@@ -39,3 +39,17 @@ ml_api_interview/
 ├── requirements.txt
 └── README.md
 ```
+
+```bash
+# Установить плагин (один раз)
+poetry self add poetry-plugin-export
+
+# Экспортировать только основные зависимости (без dev)
+poetry export -f requirements.txt --output requirements.txt --without-hashes
+
+# Со всеми зависимостями (включая dev)
+poetry export -f requirements.txt --output requirements.txt --with dev --without-hashes
+
+# Только основная группа
+poetry export -f requirements.txt --output requirements.txt --only main --without-hashes
+```
