@@ -38,6 +38,10 @@ ENV/
 .env
 .env.local
 .env.*.local
+!.env.example
+
+# Detect-secrets
+.secrets.baseline  # ← НЕ игнорируем! Коммитим в репозиторий
 
 # Models (большие файлы)
 *.pkl

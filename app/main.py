@@ -1,37 +1,43 @@
 # app/main.py
 import time
 import uuid
-from datetime import datetime
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import Any
+
 import structlog
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 # 1. Сначала настраиваем логирование!
 from app.config.logging_config import setup_logging
+
 setup_logging()
 
 logger = structlog.get_logger()
 
 from app.config.config import get_settings
+from app.core.cache import check_cache, get_cache, save_to_cache
 from app.core.db import get_db_session, save_prediction
-from app.core.cache import get_cache, check_cache, save_to_cache
-from app.models.model_pickle import SideModelPickle
 from app.models.model_json import SideModelJSON
+from app.models.model_pickle import SideModelPickle
 from app.schemas.predictions import (
-    PredictionRequest, PredictionResponse,
-    BatchPredictionRequest, HealthResponse, ErrorResponse
+    BatchPredictionRequest,
+    ErrorResponse,
+    HealthResponse,
+    PredictionRequest,
+    PredictionResponse,
 )
-
 
 settings = get_settings()
 
 # Глобальные переменные
-ml_model_instance = None
-db_engine = None
-session_factory = None
-cache_client = None
+ml_model_instance: Any = None
+db_engine: Any = None
+session_factory: Any = None
+cache_client: Any = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -51,6 +57,7 @@ async def lifespan(app: FastAPI):
         raise ValueError(f"Unknown MODEL_TYPE: {settings.MODEL_TYPE}")
 
     from pathlib import Path
+
     abs_path = Path(__file__).resolve().parent.parent / model_path.lstrip("./")
     logger.info(f"Loading model from: {abs_path}")
     ml_model_instance.load(str(abs_path))
@@ -72,22 +79,26 @@ async def lifespan(app: FastAPI):
     if cache_client:
         await cache_client.close()
 
+
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
 )
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.ENV == "development" else ["https://client.example.com"],
+    allow_origins=(
+        ["*"] if settings.ENV == "development" else ["https://client.example.com"]
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/health", response_model=HealthResponse, tags=["monitoring"])
 async def health_check():
@@ -98,17 +109,18 @@ async def health_check():
             "type": settings.MODEL_TYPE,
             "loaded": ml_model_instance is not None,
             "db_connected": db_engine is not None,
-            "cache_connected": cache_client is not None
+            "cache_connected": cache_client is not None,
         },
-        timestamp=datetime.utcnow(),
-        version="1.0.0"
+        timestamp=datetime.now(tz=UTC),
+        version="1.0.0",
     )
+
 
 @app.post(
     "/predict",
     response_model=PredictionResponse,
     responses={422: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
-    tags=["predictions"]
+    tags=["predictions"],
 )
 async def predict(request: PredictionRequest, req: Request):
     """Основной endpoint предсказания."""
@@ -134,9 +146,9 @@ async def predict(request: PredictionRequest, req: Request):
                 session_factory,
                 request_id=request_id,
                 input_data=request.model_dump(),
-                prediction=result
+                prediction=result,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error("db_save_failed", error=str(e), request_id=request_id)
 
         # 4. Кэширование результата
@@ -147,7 +159,7 @@ async def predict(request: PredictionRequest, req: Request):
             class_name=result.get("class_name", "Unknown"),
             request_id=request_id,
             model_version=result.get("model_version", "1.0"),
-            latency_ms=round(latency_ms, 2)
+            latency_ms=round(latency_ms, 2),
         )
 
         await save_to_cache(cache_client, cache_key, response, ttl=settings.CACHE_TTL)
@@ -156,17 +168,15 @@ async def predict(request: PredictionRequest, req: Request):
             "prediction_completed",
             request_id=request_id,
             latency_ms=latency_ms,
-            prediction=result["prediction"]
+            prediction=result["prediction"],
         )
 
         return response
 
     except Exception as e:
         logger.exception("prediction_failed", request_id=request_id)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal error: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Internal error: {e!s}")
+
 
 @app.post("/predict/batch", tags=["predictions"])
 async def batch_predict(request: BatchPredictionRequest):
@@ -174,6 +184,7 @@ async def batch_predict(request: BatchPredictionRequest):
     items = [item.model_dump() for item in request.items]
     results = ml_model_instance.predict(items)
     return {"predictions": results, "count": len(results)}
+
 
 # Global error handler
 @app.exception_handler(Exception)
@@ -186,6 +197,6 @@ async def global_exception_handler(request: Request, exc: Exception):
             title="Internal Server Error",
             status=500,
             detail=str(exc) if settings.ENV == "development" else "Internal error",
-            instance=str(request.url)
-        ).model_dump()
+            instance=str(request.url),
+        ).model_dump(),
     )

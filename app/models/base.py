@@ -1,6 +1,7 @@
 # app/models/base.py (Абстракция)
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
+
 
 class BaseModelInterface(ABC):
     @abstractmethod
@@ -8,5 +9,5 @@ class BaseModelInterface(ABC):
         pass
 
     @abstractmethod
-    def predict(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def predict(self, data: dict[str, Any]) -> dict[str, Any]:
         pass

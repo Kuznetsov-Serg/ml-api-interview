@@ -29,7 +29,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ml_user
-      POSTGRES_PASSWORD: ml_pass
+      POSTGRES_PASSWORD: ml_pass  # pragma: allowlist secret
       POSTGRES_DB: ml_db
     volumes:
       - postgres_data:/var/lib/postgresql/data

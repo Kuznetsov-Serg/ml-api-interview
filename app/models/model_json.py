@@ -2,7 +2,9 @@
 """
 Model Type JSON — загрузка через JSON (безопасный текстовый формат).
 """
+
 import json
+
 from .base import BaseModelInterface
 
 

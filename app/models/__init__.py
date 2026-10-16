@@ -1,12 +1,12 @@
 # app/models/__init__.py
 from .base import BaseModelInterface
-from .model_pickle import SideModelPickle
-from .model_json import SideModelJSON
 from .dummy_models import DummyPickleModel
+from .model_json import SideModelJSON
+from .model_pickle import SideModelPickle
 
 __all__ = [
     "BaseModelInterface",
-    "SideModelPickle",
-    "SideModelJSON",
     "DummyPickleModel",
+    "SideModelJSON",
+    "SideModelPickle",
 ]

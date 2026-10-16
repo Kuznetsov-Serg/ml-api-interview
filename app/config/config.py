@@ -1,10 +1,13 @@
 # app/config.py
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     APP_NAME: str = "ML Prediction API"
-    ENV: str = "development"
+    ENV: str = Field(default="development")
 
     # Model
     MODEL_TYPE: str = "type_pickle"  # "type_pickle" или "type_json"
@@ -12,11 +15,16 @@ class Settings(BaseSettings):
     MODEL_PATH_PICKLE: str = "./data/models/model_pickle.pkl"
     MODEL_PATH_JSON: str = "./data/models/model_json.json"
 
-    # PostgreSQL
-    DATABASE_URL: str = "postgresql+asyncpg://ml_user:ml_pass@db:5432/ml_db"
+    # Database
+    DATABASE_URL: str = Field(
+        default="postgresql+asyncpg://localhost:5432/ml_db",
+        description="URL подключения к PostgreSQL",
+    )
 
-    # RedisF
-    REDIS_URL: str = "redis://redis:6379/0"
+    # Redis
+    REDIS_URL: str = Field(
+        default="redis://redis:6379/0", description="URL подключения к Redis"
+    )
     CACHE_TTL: int = 3600
 
     # Server
@@ -28,6 +36,6 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     return Settings()

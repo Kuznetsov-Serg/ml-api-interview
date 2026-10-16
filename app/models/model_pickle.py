@@ -2,8 +2,9 @@
 """
 Model Type PICKLE — загрузка через pickle.
 """
+
 import pickle
-from pathlib import Path
+
 from .base import BaseModelInterface
 from .dummy_models import DummyPickleModel  # Импортируем класс!
 

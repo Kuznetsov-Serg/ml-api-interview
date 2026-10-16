@@ -3,9 +3,11 @@
 Скрипт для генерации тестовых моделей.
 Запускается при сборке Docker-образа.
 """
-import pickle
+
 import json
+import pickle
 from pathlib import Path
+
 from app.models.dummy_models import DummyPickleModel
 
 
