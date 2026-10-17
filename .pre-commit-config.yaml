@@ -35,11 +35,11 @@ repos:
       - id: detect-secrets
         args: [ '--baseline', '.secrets.baseline' ]
 
-#  - repo: local
-#    hooks:
-#      - id: poetry-export
-#        name: Sync requirements.txt from poetry.lock
-#        entry: poetry export -f requirements.txt --output requirements.txt --without-hashes --without dev
-#        language: system
-#        pass_filenames: false
-#        files: ^(poetry\.lock|pyproject\.toml)$
+  - repo: local
+    hooks:
+      - id: poetry-export
+        name: Sync requirements.txt from poetry.lock
+        entry: poetry export -f requirements.txt --output requirements.txt --without-hashes --without dev
+        language: system
+        pass_filenames: false
+        files: ^(poetry\.lock|pyproject\.toml)$

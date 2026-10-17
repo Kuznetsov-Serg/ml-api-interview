@@ -7,14 +7,13 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
 
 # 1. Сначала настраиваем логирование!
 from app.config.logging_config import setup_logging
 
 setup_logging()
-
 logger = structlog.get_logger()
 
 from app.config.config import get_settings
@@ -65,17 +64,17 @@ async def lifespan(app: FastAPI):
     # Инициализация БД
     db_engine, session_factory = await get_db_session()
 
-    # Инициализация кэша
-    cache_client = await get_cache(settings.REDIS_URL)
+    # Инициализация кэша с проверкой флага IS_REDIS
+    cache_client = await get_cache(settings.REDIS_URL, settings.IS_REDIS)
 
     logger.info("app_started")
-
     yield
 
     # Shutdown
     logger.info("app_shutting_down")
     if db_engine:
         await db_engine.dispose()
+    # Безопасное закрытие кэша, если он был инициализирован
     if cache_client:
         await cache_client.close()
 
@@ -128,9 +127,12 @@ async def predict(request: PredictionRequest, req: Request):
     start_time = time.perf_counter()
 
     try:
-        # 1. Проверка кэша
+        # 1. Проверка кэша если клиент существует
         cache_key = f"pred:{request.age}:{request.income}:{request.has_loan}"
-        cached = await check_cache(cache_client, cache_key)
+        cached = None
+        if cache_client:
+            cached = await check_cache(cache_client, cache_key)
+
         if cached:
             logger.info("cache_hit", request_id=request_id)
             return cached
@@ -151,7 +153,7 @@ async def predict(request: PredictionRequest, req: Request):
         except Exception as e:  # noqa: BLE001
             logger.error("db_save_failed", error=str(e), request_id=request_id)
 
-        # 4. Кэширование результата
+        # 4. Кэширование результата если клиент существует
         latency_ms = (time.perf_counter() - start_time) * 1000
         response = PredictionResponse(
             prediction=result["prediction"],
@@ -162,15 +164,18 @@ async def predict(request: PredictionRequest, req: Request):
             latency_ms=round(latency_ms, 2),
         )
 
-        await save_to_cache(cache_client, cache_key, response, ttl=settings.CACHE_TTL)
+        if cache_client:
+            await save_to_cache(
+                cache_client, cache_key, response, ttl=settings.CACHE_TTL
+            )
 
         logger.info(
             "prediction_completed",
             request_id=request_id,
             latency_ms=latency_ms,
             prediction=result["prediction"],
+            cache_used=bool(cached),
         )
-
         return response
 
     except Exception as e:

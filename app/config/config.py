@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     )
 
     # Redis
+    IS_REDIS: bool = Field(
+        default=True, description="Использовать Redis (для кэширования)"
+    )
     REDIS_URL: str = Field(
         default="redis://redis:6379/0", description="URL подключения к Redis"
     )
