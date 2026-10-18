@@ -10,9 +10,8 @@ logger = logging.getLogger(__name__)
 async def get_cache(redis_url: str, is_redis: bool) -> aioredis.Redis | None:
     """Создаёт Redis клиент или возвращает None, если кэш отключен/недоступен."""
     if not is_redis:
-        logger.info("Redis cache is disabled by configuration (IS_REDIS_CACHE=false)")
+        logger.info("Redis cache is disabled by configuration")
         return None
-
     try:
         client = aioredis.from_url(redis_url, decode_responses=True)
         # Проверяем реальное подключение при старте
@@ -20,9 +19,7 @@ async def get_cache(redis_url: str, is_redis: bool) -> aioredis.Redis | None:
         logger.info("Successfully connected to Redis cache")
         return client
     except Exception as e:  # noqa: BLE001
-        logger.warning(
-            f"Failed to connect to Redis: {e}. Cache will be disabled, app will continue without it."
-        )
+        logger.warning(f"Failed to connect to Redis: {e}. Cache disabled.")
         return None
 
 

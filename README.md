@@ -16,53 +16,52 @@ Production-ready REST API сервис для обёртывания ML-моде
 
 ```text
 ml_api_interview/
-├── app/
-│   ├── __init__.py
-│   ├── main.py                    # Точка входа FastAPI
-│   ├── config/
-│   │   ├── __init__.py
-│   │   ├── config.py              # Настройки (Pydantic Settings)
-│   │   ├── logging_config.json
-│   │   └── logging_config.py
-│   ├── core/
-│   │   ├── __init__.py
-│   │   ├── cache.py               # ← cache.py (Redis утилиты)
-│   │   └── db.py                  # ← db.py (подключение к PostgreSQL)
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── base.py                # Абстрактный базовый класс
-│   │   ├── dummy_models.py
-│   │   ├── model_type_pickle.py   # Pickle реализация
-│   │   ├── model_type_json.py     # JSON реализация
-│   │   └── model_legacy.py        # ← model.py (старая обёртка, для совместимости)
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   └── predictions.py         # Pydantic схемы
-│   └── utils/
-│       ├── __init__.py
-│       └── create_dummy_models.py # Генерация тестовых моделей
-── data/
-│   ├── input_ml/                  # ← notebook_ml_1.ipynb, notebook_ml_2.ipynb
-│   │   ├── notebook_ml_1.ipynb
-│   │   └── notebook_ml_2.ipynb
-│   │   └── notebook_ml_3.ipynb
-│   └── models/                    # model.pkl, model.json (генерируются скриптом)
-├── tests/
-│   ├── __init__.py
-│   ├── conftest.py
-│   ├── test_health.py
-│   └── test_predict.py
-├── .dockerignore
-├── .env
-├── .env.example
-├── .pre-commit-config.yaml
-├── docker-compose.yml
-├── Dockerfile
-├── main.py                        # Корневой main.py для uvicorn
-├── poetry.lock
-├── pyproject.toml
-├── requirements.txt
-└── README.md
+ ├── app/
+ │   ├── __init__.py
+ │   ├── main.py                    # Точка входа FastAPI (Composition Root, Lifespan)
+ │   ├── api/                       # 🆕 Слой маршрутизации (Роутеры)
+ │   │   ├── __init__.py
+ │   │   ├── monitoring.py          # Эндпоинты /health и /metrics
+ │   │   └── predictions.py         # Эндпоинты /predict и /predict/batch
+ │   ├── config/
+ │   │   ├── __init__.py
+ │   │   ├── config.py              # Настройки окружения (Pydantic Settings)
+ │   │   ├── logging_config.json    # Конфигурация структурированного логирования
+ │   │   └── logging_config.py      # Инициализация логгера (structlog)
+ │   ├── core/                      # 🆕 Инфраструктурные компоненты ядра
+ │   │   ├── __init__.py
+ │   │   ├── cache.py               # Клиент и утилиты Redis (Graceful Degradation)
+ │   │   ├── db.py                  # Асинхронное подключение к PostgreSQL (SQLAlchemy)
+ │   │   └── metrics.py             # 🆕 Кастомные Prometheus метрики (Histogram, Counter)
+ │   ├── models/
+ │   │   ├── __init__.py
+ │   │   ├── base.py                # Абстрактный базовый класс ML-модели
+ │   │   ├── model_pickle.py        # Реализация для бинарных .pkl моделей
+ │   │   └── model_json.py          # Реализация для текстовых .json моделей
+ │   ├── schemas/
+ │   │   ├── __init__.py
+ │   │   └── predictions.py         # Pydantic модели для Request/Response и валидации
+ │   └── utils/
+ │       ├── __init__.py
+ │       └── create_dummy_models.py # Скрипт генерации тестовых моделей для dev
+ ├── data/
+ │   └── models/                    # Сгенерированные артефакты моделей (model_pickle.pkl, model_json.json)
+ ├── tests/
+ │   ├── __init__.py
+ │   ├── conftest.py
+ │   ├── test_health.py
+ │   └── test_predict.py
+ ├── .dockerignore
+ ├── .env                           # Локальные переменные окружения (не коммитить!)
+ ├── .env.example                   # Шаблон переменных окружения
+ ├── .pre-commit-config.yaml        # Автоматические проверки кода (Ruff, MyPy, Detect-secrets)
+ ├── docker-compose.yml             # Оркестрация API, PostgreSQL и Redis
+ ├── Dockerfile                     # Multi-stage сборка образа
+ ├── main.py                        # Корневой entrypoint для запуска через uvicorn
+ ├── poetry.lock
+ ├── pyproject.toml                 # Управление зависимостями и метаданные проекта
+ ├── requirements.txt               # Генерируется из poetry.lock для Docker
+ └── README.md
 ```
 ---
 
@@ -278,17 +277,23 @@ pre-commit run --all-files
 ## 📡 API Endpoints
 
 ### Health Check
+**GET** `/health`
+Проверка работоспособности сервиса и состояния внутренних подключений (загружена ли модель, доступны ли БД и кэш).
+*Пример:* `curl http://localhost:8000/health`
 
-```bash
-GET /health
-```
-Проверка работоспособности сервиса.
+### Prometheus Metrics
+**GET** `/metrics`
+Экспорт метрик в формате Prometheus для сбора данных системами мониторинга (например, Grafana). Включает:
+- Автоматические HTTP-метрики: `http_requests_total`, `http_request_duration_seconds`.
+- Кастомные бизнес-метрики: `model_prediction_latency_seconds`, `cache_hits_total`, `cache_misses_total`.
+*Пример:* `curl http://localhost:8000/metrics`
 
 ### Prediction
-```bash
-POST /predict
-Content-Type: application/json
-
+**POST** `/predict`
+`Content-Type: application/json`
+Возвращает предсказание модели для одного запроса.
+*Пример запроса:*
+```json
 {
   "age": 30,
   "income": 50000.0,
@@ -299,10 +304,13 @@ Content-Type: application/json
 Возвращает предсказание модели.
 
 ### Batch Prediction
-```bash
-POST /predict/batch
-Content-Type: application/json
+**POST** `/predict/batch`
+`Content-Type: application/json`
+Пакетная обработка предсказаний для высокой пропускной способности.
 
+*Пример запроса:*
+
+```json
 {
   "items": [
     {"age": 30, "income": 50000.0, "has_loan": false},
@@ -310,7 +318,6 @@ Content-Type: application/json
   ]
 }
 ```
-Пакетная обработка предсказаний.
 
 ---
 
@@ -334,17 +341,42 @@ pytest -v
 ```
 ---
 
-## 📊 Мониторинг
+## 📊 Мониторинг и Визуализация
 
-### Prometheus метрики
+Проект спроектирован с учетом принципов Observability. Метрики экспортируются в формате, совместимом с Prometheus, а для визуализации рекомендуется использовать Grafana.
 
-Метрики доступны по адресу: http://localhost:8000/metrics
+#### 1. Prometheus метрики
+Метрики доступны по адресу: `http://localhost:8000/metrics`
 
-Основные метрики:
-- `http_requests_total` — общее количество запросов
-- `http_request_duration_seconds` — время обработки запросов
-- `model_prediction_latency` — latency предсказаний
-- `cache_hits_total` / `cache_misses_total` — статистика кэша
+**Автоматические метрики (через `prometheus-fastapi-instrumentator`):**
+- `http_requests_total` — общее количество HTTP-запросов (с разбивкой по `method`, `endpoint`, `status`).
+- `http_request_duration_seconds` — гистограмма времени обработки HTTP-запросов.
+
+**Кастомные бизнес-метрики (`app/core/metrics.py`):**
+- `model_prediction_latency_seconds` — гистограмма чистого времени выполнения предсказания моделью (без учета сетевых задержек), с метками `endpoint` и `model_type`.
+- `cache_hits_total` / `cache_misses_total` — счетчики эффективности кэширования с меткой `endpoint`.
+
+#### 2. Визуализация в Grafana (Рекомендация для Production)
+Для построения дашбордов подключите Prometheus как Data Source в Grafana. Примеры полезных запросов (PromQL):
+
+**Средняя латентность модели за последние 5 минут:**
+```promql
+rate(model_prediction_latency_seconds_sum{endpoint="/predict"}[5m])
+/
+rate(model_prediction_latency_seconds_count{endpoint="/predict"}[5m])
+```
+
+**Процент попаданий в кэш (Hit Rate):**
+```promql
+rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m]))
+```
+**Количество ошибок 5xx:**
+```promql
+sum(rate(http_requests_total{status=~"5.."}[5m])) by (endpoint)
+```
+
+
+
 
 ### Логирование
 
@@ -492,7 +524,7 @@ mypy app/
 
 MIT License - см. файл [LICENSE](LICENSE) для деталей.
 
-##  Авторы
+##  Автор
 
 - **Kuznetsov Serg** - mail.kuznetcov@gmail.com
 

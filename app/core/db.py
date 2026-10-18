@@ -31,7 +31,7 @@ async def get_db_session() -> tuple:
     )
     session_factory = async_sessionmaker(engine, class_=AsyncSession)
 
-    async with engine.begin() as conn:
+    async with engine.begin() as conn:  # type: ignore[arg-type]
         await conn.run_sync(Base.metadata.create_all)
 
     return engine, session_factory

@@ -1,56 +1,37 @@
 # app/main.py
-import time
-import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
-from typing import Any
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.cors import CORSMiddleware
-
-# 1. Сначала настраиваем логирование!
-from app.config.logging_config import setup_logging
-
-setup_logging()
-logger = structlog.get_logger()
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config.config import get_settings
-from app.core.cache import check_cache, get_cache, save_to_cache
-from app.core.db import get_db_session, save_prediction
+from app.config.logging_config import setup_logging
+from app.core.cache import get_cache
+from app.core.db import get_db_session
 from app.models.model_json import SideModelJSON
 from app.models.model_pickle import SideModelPickle
-from app.schemas.predictions import (
-    BatchPredictionRequest,
-    ErrorResponse,
-    HealthResponse,
-    PredictionRequest,
-    PredictionResponse,
-)
+from app.schemas.predictions import ErrorResponse
 
+# 1. Логирование и настройки
+setup_logging()
+logger = structlog.get_logger()
 settings = get_settings()
-
-# Глобальные переменные
-ml_model_instance: Any = None
-db_engine: Any = None
-session_factory: Any = None
-cache_client: Any = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Инициализация при старте, очистка при shutdown."""
-    global ml_model_instance, db_engine, session_factory, cache_client
-
     logger.info("app_starting", env=settings.ENV)
 
     # Загрузка модели
     if settings.MODEL_TYPE == "type_pickle":
-        ml_model_instance = SideModelPickle()
+        app.state.ml_model_instance = SideModelPickle()
         model_path = settings.MODEL_PATH_PICKLE
     elif settings.MODEL_TYPE == "type_json":
-        ml_model_instance = SideModelJSON()
+        app.state.ml_model_instance = SideModelJSON()
         model_path = settings.MODEL_PATH_JSON
     else:
         raise ValueError(f"Unknown MODEL_TYPE: {settings.MODEL_TYPE}")
@@ -59,26 +40,26 @@ async def lifespan(app: FastAPI):
 
     abs_path = Path(__file__).resolve().parent.parent / model_path.lstrip("./")
     logger.info(f"Loading model from: {abs_path}")
-    ml_model_instance.load(str(abs_path))
+    app.state.ml_model_instance.load(str(abs_path))
 
     # Инициализация БД
-    db_engine, session_factory = await get_db_session()
+    app.state.db_engine, app.state.session_factory = await get_db_session()
 
-    # Инициализация кэша с проверкой флага IS_REDIS
-    cache_client = await get_cache(settings.REDIS_URL, settings.IS_REDIS)
+    # Инициализация кэша
+    app.state.cache_client = await get_cache(settings.REDIS_URL, settings.IS_REDIS)
 
     logger.info("app_started")
     yield
 
     # Shutdown
     logger.info("app_shutting_down")
-    if db_engine:
-        await db_engine.dispose()
-    # Безопасное закрытие кэша, если он был инициализирован
-    if cache_client:
-        await cache_client.close()
+    if getattr(app.state, "db_engine", None):
+        await app.state.db_engine.dispose()
+    if getattr(app.state, "cache_client", None):
+        await app.state.cache_client.close()
 
 
+# 2. Создание приложения
 app = FastAPI(
     title=settings.APP_NAME,
     version="1.0.0",
@@ -87,7 +68,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS
+# 3. Middleware (CORS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=(
@@ -98,100 +79,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.get("/health", response_model=HealthResponse, tags=["monitoring"])
-async def health_check():
-    """Health check для Kubernetes readiness/liveness probes."""
-    return HealthResponse(
-        status="ok",
-        model={
-            "type": settings.MODEL_TYPE,
-            "loaded": ml_model_instance is not None,
-            "db_connected": db_engine is not None,
-            "cache_connected": cache_client is not None,
-        },
-        timestamp=datetime.now(tz=UTC),
-        version="1.0.0",
-    )
-
-
-@app.post(
-    "/predict",
-    response_model=PredictionResponse,
-    responses={422: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
-    tags=["predictions"],
+# 4. Prometheus Instrumentator (автоматически собирает http_requests_total и duration)
+Instrumentator().instrument(app).expose(
+    app, endpoint="/metrics", include_in_schema=False
 )
-async def predict(request: PredictionRequest, req: Request):
-    """Основной endpoint предсказания."""
-    request_id = str(uuid.uuid4())
-    start_time = time.perf_counter()
 
-    try:
-        # 1. Проверка кэша если клиент существует
-        cache_key = f"pred:{request.age}:{request.income}:{request.has_loan}"
-        cached = None
-        if cache_client:
-            cached = await check_cache(cache_client, cache_key)
+# 5. Подключение роутеров
+from app.api import monitoring, predictions
 
-        if cached:
-            logger.info("cache_hit", request_id=request_id)
-            return cached
-
-        # 2. Предсказание
-        results = ml_model_instance.predict(request.model_dump())
-        result = results[0] if isinstance(results, list) else results
-
-        # 3. Сохранение в БД (асинхронно, не блокируем ответ)
-        try:
-            await save_prediction(
-                db_engine,
-                session_factory,
-                request_id=request_id,
-                input_data=request.model_dump(),
-                prediction=result,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error("db_save_failed", error=str(e), request_id=request_id)
-
-        # 4. Кэширование результата если клиент существует
-        latency_ms = (time.perf_counter() - start_time) * 1000
-        response = PredictionResponse(
-            prediction=result["prediction"],
-            probability=result.get("probability", 0.95),
-            class_name=result.get("class_name", "Unknown"),
-            request_id=request_id,
-            model_version=result.get("model_version", "1.0"),
-            latency_ms=round(latency_ms, 2),
-        )
-
-        if cache_client:
-            await save_to_cache(
-                cache_client, cache_key, response, ttl=settings.CACHE_TTL
-            )
-
-        logger.info(
-            "prediction_completed",
-            request_id=request_id,
-            latency_ms=latency_ms,
-            prediction=result["prediction"],
-            cache_used=bool(cached),
-        )
-        return response
-
-    except Exception as e:
-        logger.exception("prediction_failed", request_id=request_id)
-        raise HTTPException(status_code=500, detail=f"Internal error: {e!s}")
+app.include_router(monitoring.router)
+app.include_router(predictions.router)
 
 
-@app.post("/predict/batch", tags=["predictions"])
-async def batch_predict(request: BatchPredictionRequest):
-    """Batch предсказание для высокой пропускной способности."""
-    items = [item.model_dump() for item in request.items]
-    results = ml_model_instance.predict(items)
-    return {"predictions": results, "count": len(results)}
-
-
-# Global error handler
+# 6. Global error handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.exception("unhandled_error", path=request.url.path)
