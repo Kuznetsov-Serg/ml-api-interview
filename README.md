@@ -45,13 +45,31 @@ ml_api_interview/
  │       ├── __init__.py
  │       └── create_dummy_models.py # Скрипт генерации тестовых моделей для dev
  ├── data/
- │   └── models/                    # Сгенерированные артефакты моделей (model_pickle.pkl, model_json.json)
+ ├── customers.csv              # ← общий тестовый датасет (100k записей)
+ │   ├── input_ml/                          # Сырой код от ML-инженеров
+ │   │    ├── notebook_ml_1.ipynb
+ │   │    ├── notebook_ml_1.py               # Конвертирован через jupytext
+ │   │    ├── notebook_ml_2.ipynb
+ │   │    ├── notebook_ml_2.py               # Конвертирован через jupytext
+ │   │    ├── notebook_ml_3.ipynb
+ │   │    ├── notebook_ml_3.py               # Конвертирован через jupytext
+ │   │    └── customers.csv                  # Сгенерированные тестовые данные
+ │   ├── output_ml/                         # Оптимизированные версии
+ │   │   ├── notebook_ml_1.py               # Векторизация, lazy loading, Pydantic
+ │   │   ├── notebook_ml_2.py               # (будет)
+ │   │   └── notebook_ml_3.py               # (будет)
+ ├── models/                    # ← артефакты обученных моделей
+ │   ├── model_pickle.pkl
+ │   └── model_json.json
  ├── grafana/
  │   ├── provisioning/
  │   │   └── datasources/
  │   │       └── prometheus.yml       # Авто-подключение Prometheus
  │   └── dashboards/
  │       └── ml-api-dashboard.json    # Сам дашборд в формате JSON
+ ├── scripts/                # ← утилиты разработки
+ │   ├── generate_test_data.py
+ │   └── benchmark.py
  ├── tests/
  │   ├── __init__.py
  │   ├── conftest.py
@@ -380,21 +398,6 @@ pytest -v
 ```
 ---
 
-## 📊 Мониторинг и Визуализация
-
-Проект спроектирован с учетом принципов Observability. Метрики экспортируются в формате, совместимом с Prometheus, а для визуализации рекомендуется использовать Grafana.
-
-#### 1. Prometheus метрики
-Метрики доступны по адресу: `http://localhost:8000/metrics`
-
-**Автоматические метрики (через `prometheus-fastapi-instrumentator`):**
-- `http_requests_total` — общее количество HTTP-запросов (с разбивкой по `method`, `endpoint`, `status`).
-- `http_request_duration_seconds` — гистограмма времени обработки HTTP-запросов.
-
-**Кастомные бизнес-метрики (`app/core/metrics.py`):**
-- `model_prediction_latency_seconds` — гистограмма чистого времени выполнения предсказания моделью (без учета сетевых задержек), с метками `endpoint` и `model_type`.
-- `cache_hits_total` / `cache_misses_total` — счетчики эффективности кэширования с меткой `endpoint`.
-
 ## 📊 Мониторинг и визуализация (Prometheus + Grafana)
 
 Проект спроектирован с учетом принципов Observability. Метрики экспортируются в формате OpenMetrics, а дашборды автоматически загружаются в Grafana через механизм provisioning.
@@ -448,6 +451,63 @@ sum(rate(http_requests_total{status=~"5.."}[5m])) by (endpoint)
 - Цветной вывод для development
 - Автоматическое добавление timestamp, level, request_id
 
+---
+
+##  Бенчмарки и оптимизация ML-кода
+
+Проект включает инструменты для демонстрации процесса превращения "сырого" ML-кода из Jupyter Notebooks в production-ready решения.
+
+### Структура
+- `data/input_ml/notebook_ml_1.ipynb` — пример "сырого" кода от ML-инженера (антипаттерны: `iterrows`, загрузка модели в runtime, отсутствие типизации)
+- `scripts/ml_1_optimize.py` — оптимизированная версия с векторизацией, lazy loading и Pydantic-валидацией
+- `scripts/benchmark.py` — универсальный инструмент для замера производительности
+- `scripts/generate_test_data.py` — генерация тестовых данных (`customers.csv`)
+
+### Быстрый старт
+
+**1. Генерация тестовых данных:**
+```bash
+poetry run python scripts/generate_test_data.py
+```
+Создаёт файл `data/input_ml/customers.csv` с 100 000 записей.
+
+**2. Запуск бенчмарка:**
+```bash
+poetry run python scripts/benchmark.py \
+    --old data/input_ml/notebook_ml_1.py \
+    --new scripts/ml_1_optimize.py \
+    --function engineer_features \
+    --data data/input_ml/customers.csv \
+    --runs 5
+```
+
+**Параметры:**
+- --old — путь к файлу со старой реализацией (с антипаттернами)
+- --new — путь к файлу с оптимизированной реализацией
+- --function — имя функции для сравнения (должна быть в обоих файлах)
+- --data — путь к CSV с тестовыми данными
+- --runs — количество прогонов для усреднения (по умолчанию 3)
+
+**3. Ожидаемый вывод:*
+
+```bash
+🚀 Запуск: OLD (notebook_ml_1.py)
+   ⏱ Время выполнения: 2.3456 сек
+    Пиковая память:  45.67 MB
+
+🚀 Запуск: NEW (ml_1_optimize.py)
+   ⏱ Время выполнения: 0.0234 сек
+   💾 Пиковая память:  12.34 MB
+
+🏆 ИТОГОВЫЙ РЕЗУЛЬТАТ (медиана):
+   OLD: 2.3456 сек, 45.67 MB
+   NEW: 0.0234 сек, 12.34 MB
+   ⚡ Ускорение:      100.2x быстрее
+   📉 Экономия памяти: 3.7x меньше
+```
+
+
+---
 
 ## 🔄 Переключение между моделями
 
@@ -572,6 +632,14 @@ black .
 # MyPy (проверка типов)
 mypy app/
 ```
+
+---
+
+## 📋 ML Code Review Checklist
+
+Полный чек-лист для ревью кода от Data Scientists: [ML Code Review Checklist](ML_Code_Review_CheckList.md)
+
+Этот чек-лист используется для стандартизации качества ML-кода перед деплоем в production.
 
 ---
 

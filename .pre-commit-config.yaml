@@ -25,10 +25,17 @@ repos:
         exclude: ^data/  # <-- ИГНОРИРУЕМ ПАПКУ С ВХОДНЫМИ ДАННЫМИ
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.4.0
+    rev: v1.11.2
     hooks:
       - id: mypy
-        additional_dependencies: [types-requests, types-PyYAML, pydantic]
+        # Запрещаем pre-commit передавать файлы из этих папок в mypy
+        # (?i) делает проверку нечувствительной к регистру (для Windows)
+        exclude: "(?i)^data[/\\\\].*|^scripts[/\\\\].*|^tests[/\\\\].*"
+        additional_dependencies:
+          - types-requests
+          - types-PyYAML
+          - pydantic
+          - types-redis
 
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0

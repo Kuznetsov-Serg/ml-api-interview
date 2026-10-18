@@ -45,6 +45,7 @@ ENV/
 
 # Models (большие файлы)
 *.pkl
+*.csv
 *.h5
 *.pt
 *.pth

@@ -39,6 +39,9 @@ class MLModel:
         if self._model is None:
             self.load()
 
+        # Явно указываем MyPy, что модель загружена
+        assert self._model is not None, "Model failed to load"
+
         if isinstance(features, dict):
             features = [features]
 

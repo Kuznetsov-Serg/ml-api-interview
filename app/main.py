@@ -53,10 +53,14 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("app_shutting_down")
-    if getattr(app.state, "db_engine", None):
-        await app.state.db_engine.dispose()
-    if getattr(app.state, "cache_client", None):
-        await app.state.cache_client.close()
+
+    db_engine = getattr(app.state, "db_engine", None)
+    if db_engine is not None:
+        await db_engine.dispose()
+
+    cache_client = getattr(app.state, "cache_client", None)
+    if cache_client is not None:
+        await cache_client.close()
 
 
 # 2. Создание приложения
