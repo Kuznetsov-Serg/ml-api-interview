@@ -46,6 +46,12 @@ ml_api_interview/
  │       └── create_dummy_models.py # Скрипт генерации тестовых моделей для dev
  ├── data/
  │   └── models/                    # Сгенерированные артефакты моделей (model_pickle.pkl, model_json.json)
+ ├── grafana/
+ │   ├── provisioning/
+ │   │   └── datasources/
+ │   │       └── prometheus.yml       # Авто-подключение Prometheus
+ │   └── dashboards/
+ │       └── ml-api-dashboard.json    # Сам дашборд в формате JSON
  ├── tests/
  │   ├── __init__.py
  │   ├── conftest.py
@@ -318,8 +324,41 @@ pre-commit run --all-files
   ]
 }
 ```
-
 ---
+##  ML Code Optimization Workflow
+
+Проект включает примеры "сырого" ML-кода (`data/input_ml/*.ipynb`), демонстрирующие типичные антипаттерны (циклы `iterrows`, отсутствие типизации, загрузка модели в runtime).
+
+Для анализа и оптимизации этого кода используется **jupytext**, который конвертирует ноутбуки в обычные Python-скрипты, сохраняя структуру ячеек. Это позволяет:
+- Работать с кодом в любой IDE (PyCharm, VS Code) с полным support линтеров и типизации.
+- Видеть чистый `git diff` при изменениях (без бинарных blob'ов от `.ipynb`).
+- Легко интегрировать код notebooks в CI/CD пайплайны.
+
+### Использование
+
+**1. Конвертация Notebook → Python (для редактирования в IDE):**
+```bash
+# Установить зависимость (если еще не установлена)
+poetry add --group dev jupytext
+
+# Конвертировать в формат percent (ячейки разделяются комментариями # %%)
+poetry run jupytext --to py:percent data/input_ml/notebook_ml_1.ipynb
+```
+
+**2. Обратная конвертация Python → Notebook (для визуализации/демо):**
+```bash
+poetry run jupytext --to ipynb data/input_ml/notebook_ml_1.py
+```
+
+**3. Синхронизация (Pairing):**
+
+Можно настроить автоматическое сохранение в обоих форматах одновременно:
+
+```bash
+poetry run jupytext --set-formats ipynb,py:percent data/input_ml/notebook_ml_1.ipynb
+```
+Теперь при сохранении `.ipynb` файла автоматически обновится `.py` версия, и наоборот.
+
 
 ##  Тестирование
 
@@ -356,8 +395,35 @@ pytest -v
 - `model_prediction_latency_seconds` — гистограмма чистого времени выполнения предсказания моделью (без учета сетевых задержек), с метками `endpoint` и `model_type`.
 - `cache_hits_total` / `cache_misses_total` — счетчики эффективности кэширования с меткой `endpoint`.
 
-#### 2. Визуализация в Grafana (Рекомендация для Production)
-Для построения дашбордов подключите Prometheus как Data Source в Grafana. Примеры полезных запросов (PromQL):
+## 📊 Мониторинг и визуализация (Prometheus + Grafana)
+
+Проект спроектирован с учетом принципов Observability. Метрики экспортируются в формате OpenMetrics, а дашборды автоматически загружаются в Grafana через механизм provisioning.
+
+### 1. Prometheus метрики
+Метрики доступны по адресу: `http://localhost:8000/metrics`
+
+**Автоматические HTTP-метрики** (через `prometheus-fastapi-instrumentator`):
+- `http_requests_total` — общее количество HTTP-запросов (с лейблами `method`, `handler`, `status`).
+- `http_request_duration_seconds` — гистограмма времени обработки HTTP-запросов (для расчета P50/P95/P99 latency).
+
+**Кастомные бизнес-метрики** (`app/core/metrics.py`):
+- `model_prediction_latency_seconds` — гистограмма чистого времени выполнения предсказания моделью (без учета сетевых задержек), с лейблами `endpoint` и `model_type`.
+- `cache_hits_total` / `cache_misses_total` — счетчики эффективности кэширования с лейблом `endpoint`.
+
+### 2. Визуализация в Grafana
+Grafana настроена на автоматическую загрузку дашбордов из папки `grafana/dashboards/` при старте контейнера (благодаря конфигурации в `grafana/provisioning/dashboards/dashboard.yml`).
+
+**Как получить доступ:**
+1. Откройте браузер и перейдите по адресу: [http://localhost:3000](http://localhost:3000)
+2. Войдите под учетными данными по умолчанию:
+   - **Логин:** `admin`
+   - **Пароль:** `admin` (при первом входе Grafana предложит его сменить)
+3. Перейдите в раздел **Dashboards** → папка **ML API**. Там вы найдете готовый дашборд `ml-api-dashboard.json`.
+
+*(Примечание: Источник данных Prometheus (`http://prometheus:9090`) также добавляется автоматически через provisioning).*
+
+### 3. Полезные PromQL запросы для отладки
+Вы можете использовать эти запросы в разделе **Explore** в Grafana или напрямую в Prometheus (`http://localhost:9090`):
 
 **Средняя латентность модели за последние 5 минут:**
 ```promql
@@ -374,9 +440,6 @@ rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_tot
 ```promql
 sum(rate(http_requests_total{status=~"5.."}[5m])) by (endpoint)
 ```
-
-
-
 
 ### Логирование
 
