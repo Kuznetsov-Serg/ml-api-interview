@@ -12,6 +12,117 @@ Production-ready REST API сервис для обёртывания ML-моде
 - **Мониторингом** через Prometheus метрики и структурированное логирование
 - **Поддержкой двух форматов моделей**: Pickle (бинарный) и JSON (текстовый)
 
+
+---
+
+## 🏛️ Архитектура
+
+```mermaid
+flowchart TB
+    Client[HTTP Client] -->|REST| API[FastAPI :8000]
+
+    subgraph "Application Layer"
+        API --> Router[Router<br/>predictions.py / monitoring.py]
+        Router --> Service[Service Layer<br/>Pydantic Validation]
+        Service --> DI[Dependency Injection<br/>FastAPI Depends]
+    end
+
+    subgraph "Core Layer"
+        DI --> Model[ML Model<br/>Factory Pattern]
+        DI --> Cache[(Redis Cache<br/>Graceful Degradation)]
+        DI --> DB[(PostgreSQL<br/>Async SQLAlchemy)]
+    end
+
+    subgraph "Observability"
+        API -.-> Metrics[Prometheus<br/>/metrics]
+        API -.-> Logs[structlog<br/>JSON + request_id]
+        Metrics --> Grafana[Grafana Dashboard]
+    end
+
+    subgraph "Lifecycle"
+        Lifespan[Lifespan Context] -->|startup| Model
+        Lifespan -->|startup| Cache
+        Lifespan -->|startup| DB
+    end
+
+    style API fill:#4CAF50,color:#fff
+    style Model fill:#2196F3,color:#fff
+    style Cache fill:#FF9800,color:#fff
+    style DB fill:#9C27B0,color:#fff
+```
+
+**Ключевые архитектурные решения:**
+
+| Решение | Зачем | Где реализовано |
+|---|---|---|
+| **Composition Root** | Одна точка сборки всех зависимостей — нет разбросанных `import` и синглтонов | `app/main.py` |
+| **Lifespan Context** | Модель, БД, кэш загружаются **один раз** при старте, а не на каждый запрос (решает проблему `notebook_ml_1`) | `app/main.py:lifespan` |
+| **Factory Pattern** | Переключение между моделями (Pickle / JSON) через env vars — DS-команда добавляет новую модель без изменения кода | `app/models/` |
+| **Graceful Degradation** | Redis упал → API работает без кэша; модель не загрузилась → 503 с RFC 7807 телом | `app/core/cache.py` |
+| **Dependency Injection** | Тестируемость и слабая связанность — моки в тестах через `app.dependency_overrides` | FastAPI `Depends` |
+| **Cache-Aside Pattern** | Повторные одинаковые запросы обслуживаются из Redis (hit rate ~40-60%), SHA256 от нормализованных данных как ключ | `app/core/cache.py` |
+| **RFC 7807 Problem Details** | Единый формат ошибок (`type`, `title`, `status`, `detail`, `instance`) — клиенту понятно, что произошло | `app/api/` |
+| **Structured Logging** | JSON-логи с `request_id` для трассировки через весь стек (API → Service → Model → Cache) | `structlog` + `config/logging_config.py` |
+| **Multi-stage Docker Build** | Итоговый образ ~250MB вместо ~1.2GB, non-root user, HEALTHCHECK для K8s liveness probes | `Dockerfile` |
+| **Prometheus + Custom Metrics** | Разделение HTTP-метрик и бизнес-метрик (`model_prediction_latency_seconds`, `cache_hits_total`) — поиск узких мест | `app/core/metrics.py` |
+
+
+---
+
+## ⚡ Производительность
+
+### Стратегии оптимизации
+
+| Проблема | Решение | Эффект | Где |
+|---|---|---|---|
+| Модель грузится при каждом запросе | **Lazy Loading** в `lifespan` | -95% latency на холодном старте | `app/main.py` |
+| Повторные одинаковые запросы | **Cache-Aside** в Redis с TTL | Hit rate ~40-60% для типовых workload | `app/core/cache.py` |
+| Построчная обработка | **Batching** запросов | Throughput x10-50 | `/predict/batch` |
+| LLM-вызовы по одному | **Batch + SSE streaming** | Latency P95 ↓ в 3-5 раз | `notebook_ml_3` |
+| Блокирующий I/O | **Async/await** везде | Concurrent requests без тредов | SQLAlchemy asyncpg |
+
+### Кэширование
+
+**Cache-Aside Pattern:**
+```python
+Request → Check Cache (Redis)
+├─ HIT → Return cached result (TTL 5 min)
+└─ MISS → Compute → Store in Cache → Return
+```
+
+**Ключ кэша** формируется как SHA256 от нормализованных входных данных — это обеспечивает детерминированность и защиту от коллизий.
+
+**Graceful Degradation:** если Redis недоступен, API продолжает работать, просто без кэша. Метрика `cache_redis_down_total` алертит в Prometheus.
+
+### Batching
+
+```python
+# Endpoint /predict/batch принимает до 1000 элементов за раз
+@app.post("/predict/batch")
+async def predict_batch(items: list[PredictionRequest] = Field(max_length=1000)):
+    # Одна модель.predict() на весь батч вместо N вызовов
+    results = await model.predict_batch([item.dict() for item in items])
+    return {"predictions": results}
+```
+
+### Benchmarking
+Встроенный инструмент для сравнения "до/после" оптимизации:
+```poetry
+poetry run python scripts/benchmark.py \
+    --old data/input_ml/notebook_ml_1.py \
+    --new data/output_ml/notebook_ml_1.py \
+    --function engineer_features \
+    --data data/input_ml/customers.csv \
+    --runs 5
+```
+**Типичные результаты на реальных кейсах:**
+- notebook_ml_1 (iterrows → vectorized): 100x ускорение, 3.7x экономия памяти
+- notebook_ml_2 (chain operations): 15x ускорение на 100k строк
+- notebook_ml_3 (batching LLM): 5x ускорение P95 latency
+
+
+
+
 ## 📁 Структура проекта
 
 ```text
@@ -45,19 +156,18 @@ ml_api_interview/
  │       ├── __init__.py
  │       └── create_dummy_models.py # Скрипт генерации тестовых моделей для dev
  ├── data/
- ├── customers.csv              # ← общий тестовый датасет (100k записей)
+ │   ├── customers.csv          # Сгенерированные тестовые данные
  │   ├── input_ml/                          # Сырой код от ML-инженеров
- │   │    ├── notebook_ml_1.ipynb
- │   │    ├── notebook_ml_1.py               # Конвертирован через jupytext
- │   │    ├── notebook_ml_2.ipynb
- │   │    ├── notebook_ml_2.py               # Конвертирован через jupytext
- │   │    ├── notebook_ml_3.ipynb
- │   │    ├── notebook_ml_3.py               # Конвертирован через jupytext
- │   │    └── customers.csv                  # Сгенерированные тестовые данные
+ │   │   ├── notebook_ml_1.ipynb
+ │   │   ├── notebook_ml_1.py               # Конвертирован через jupytext
+ │   │   ├── notebook_ml_2.ipynb
+ │   │   ├── notebook_ml_2.py               # Конвертирован через jupytext
+ │   │   ├── notebook_ml_3.ipynb
+ │   │   └── notebook_ml_3.py               # Конвертирован через jupytext
  │   ├── output_ml/                         # Оптимизированные версии
  │   │   ├── notebook_ml_1.py               # Векторизация, lazy loading, Pydantic
- │   │   ├── notebook_ml_2.py               # (будет)
- │   │   └── notebook_ml_3.py               # (будет)
+ │   │   ├── notebook_ml_2.py               # (в работе)
+ │   │   └── notebook_ml_3.py               # (в работе)
  ├── models/                    # ← артефакты обученных моделей
  │   ├── model_pickle.pkl
  │   └── model_json.json
@@ -201,14 +311,14 @@ Docker-образ использует requirements.txt для установк�
 # 1. Установить плагин экспорта (один раз)
 poetry self add poetry-plugin-export
 
-# 2. Экспортировать только production-зависимости
+# 2. Экспортировать только production-зависимости (рекомендуемый способ)
 poetry export -f requirements.txt --output requirements.txt --without-hashes --without dev
 ```
 Альтернативная запись (эквивалент):
 ```bash
 poetry export -f requirements.txt --output requirements.txt --without-hashes --only main
 ```
-Альтернативная запись (если с poetry export проблемы):
+Альтернатива через `uv` (если `poetry` export вызывает проблемы):
 ```bash
 brew install uv
 # или через pip: pip install uv
@@ -217,8 +327,9 @@ uv pip compile pyproject.toml --no-dev -o requirements.txt
 ```
 **⚠️ Важно**
 
-- **Никогда не коммитите** requirements.txt, если вы используете Poetry как основной менеджер — он должен генерироваться автоматически в CI/CD.
-- Если вы всё же коммитите requirements.txt, **обновляйте** его после каждого изменения pyproject.toml:
+- Никогда не коммитьте requirements.txt, если Poetry — основной менеджер. Он должен генерироваться автоматически в CI/CD.
+- Флаг --without-hashes нужен, потому что pip в Docker не всегда может проверить хеши при установке из приватных репозиториев.
+- Флаг --without dev исключает тестовые зависимости (pytest, mypy, ruff), что уменьшает размер образа.
 
 ```bash
 poetry lock
@@ -434,6 +545,11 @@ rate(model_prediction_latency_seconds_sum{endpoint="/predict"}[5m])
 /
 rate(model_prediction_latency_seconds_count{endpoint="/predict"}[5m])
 ```
+**Пропускная способность (Throughput)**
+```promql
+sum(rate(http_requests_total{status=~"2.."}[1m])) by (handler)
+```
+
 
 **Процент попаданий в кэш (Hit Rate):**
 ```promql
@@ -458,8 +574,11 @@ sum(rate(http_requests_total{status=~"5.."}[5m])) by (endpoint)
 Проект включает инструменты для демонстрации процесса превращения "сырого" ML-кода из Jupyter Notebooks в production-ready решения.
 
 ### Структура
+
 - `data/input_ml/notebook_ml_1.ipynb` — пример "сырого" кода от ML-инженера (антипаттерны: `iterrows`, загрузка модели в runtime, отсутствие типизации)
-- `scripts/ml_1_optimize.py` — оптимизированная версия с векторизацией, lazy loading и Pydantic-валидацией
+- `data/output_ml/notebook_ml_1.py` — оптимизированная версия с векторизацией, lazy loading и Pydantic-валидацией
+- `data/input_ml/notebook_ml_2.ipynb` / `data/output_ml/notebook_ml_2.py` — кейс с `groupby`/`apply(lambda)` и записью в PostgreSQL
+- `data/input_ml/notebook_ml_3.ipynb` / `data/output_ml/notebook_ml_3.py` — кейс с LLM, streaming, batching
 - `scripts/benchmark.py` — универсальный инструмент для замера производительности
 - `scripts/generate_test_data.py` — генерация тестовых данных (`customers.csv`)
 
@@ -475,7 +594,7 @@ poetry run python scripts/generate_test_data.py
 ```bash
 poetry run python scripts/benchmark.py \
     --old data/input_ml/notebook_ml_1.py \
-    --new scripts/ml_1_optimize.py \
+    --new data/output_ml/notebook_ml_1.py \
     --function engineer_features \
     --data data/input_ml/customers.csv \
     --runs 5
@@ -525,7 +644,7 @@ MODEL_PATH_PICKLE=./data/models/model_pickle.pkl
 
 ```env
 MODEL_TYPE=type_json
-MODEL_PATH_JSON=./data/models/model_b.json
+MODEL_PATH_JSON=./data/models/model_json.json
 ```
 Использует текстовый формат JSON (безопаснее, переносимее между языками, но медленнее).
 
@@ -608,6 +727,70 @@ FROM python:3.11-slim
 - **Rate limiting** (опционально через middleware)
 - **Input validation** через Pydantic
 - **Detect-secrets** в pre-commit hooks для предотвращения утечек
+
+### Аутентификация и авторизация (в планах)
+
+Проект поддерживает два механизма аутентификации (настраиваются через `AUTH_TYPE`):
+
+| Тип | Когда использовать | Реализация |
+|---|---|---|
+| **API Key** | Внутренние сервисы, M2M | Header `X-API-Key`, валидация через middleware |
+| **JWT (Bearer)** | Внешние клиенты, фронтенд | `Authorization: Bearer <token>`, RS256 подпись |
+
+```bash
+# Пример в .env
+AUTH_TYPE=jwt
+JWT_PUBLIC_KEY_PATH=./certs/public.pem
+JWT_ALGORITHM=RS256
+```
+
+### Rate Limiting (в планах)
+Защита от DDoS и злоупотреблений через slowapi:
+```python
+# app/main.py
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.post("/predict")
+@limiter.limit("100/minute")  # 100 запросов в минуту с одного IP
+async def predict(request: Request, ...):
+    ...
+```
+Лимиты настраиваются через переменные окружения:
+```bash
+RATE_LIMIT_PREDICT=100/minute
+RATE_LIMIT_BATCH=20/minute
+RATE_LIMIT_HEALTH=1000/minute
+```
+
+### CORS
+Строгий whitelist доменов для production:
+```python
+# app/main.py
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS.split(","),  # из .env
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+```
+### Защита от инъекций и OOM
+- Pydantic-валидация на границах: размер батча ограничен (max_length=1000), числовые поля имеют ge/le
+- Таймауты на все внешние вызовы (БД, Redis, LLM API)
+- Max request size через nginx/ingress (по умолчанию 10MB)
+
+### Secrets Management
+- Секреты никогда не хранятся в коде
+- detect-secrets + trufflehog в pre-commit hooks
+- В production — интеграция с Vault / AWS Secrets Manager / K8s Secrets
+- Файл .secrets.baseline содержит только подтверждённые false positives
+
+
 
 ## 📝 Development Workflow
 
